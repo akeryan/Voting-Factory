@@ -7,7 +7,7 @@ require("./tasks/tasks.js");
  * @type import('hardhat/config').HardhatUserConfig
  */
 
-privateKey1 = process.env.ACCOUNT1;
+privateKey = process.env.ACCOUNT;
 rinkebyNetwork = process.env.RINKEBY_NETWORK;
 
 
@@ -18,7 +18,7 @@ module.exports = {
 		},
 		rinkeby: {
 			url: rinkebyNetwork,
-			accounts: [ privateKey1 ]
+			accounts: [ privateKey ]
 		}
 	},
 	solidity: {
