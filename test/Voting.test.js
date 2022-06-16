@@ -11,6 +11,7 @@ describe("Voting contract", function () {
 	let addr2;
 	let addr3;
 	let addr4;
+	let addr5;
 	let addrs;
 	let names;
 	let addresses;
@@ -30,7 +31,7 @@ describe("Voting contract", function () {
 
 	beforeEach(async function () {
 		await ethers.provider.send("evm_increaseTime", [-timeCorrection]);		
-		[owner, addr1, addr2, addr3, addr4, ...addrs] = await ethers.getSigners();
+		[owner, addr1, addr2, addr3, addr4, addr5, ...addrs] = await ethers.getSigners();
 		Voting = await ethers.getContractFactory("VotingFactory", owner);
 		voting = await Voting.deploy();
 		await voting.deployed();
@@ -43,11 +44,6 @@ describe("Voting contract", function () {
 
 	describe ("Deployment", function () {
 		it("Should set the right owner for Voting", async function () {
-			// let blockNumber = await ethers.provider.getBlockNumber();
-			// console.log((await ethers.provider.getBlock(blockNumber)).timestamp);
-			// await ethers.provider.send("evm_increaseTime", [10000]);
-			// console.log((await ethers.provider.getBlock(blockNumber)).timestamp);
-			// console.log(Math.round(new Date().getTime() / 1000));
 			expect(await voting.owner()).to.equal(owner.address);
 		});
 	});
@@ -56,7 +52,7 @@ describe("Voting contract", function () {
 		it ("Only owner can add Voting", async function() {
 			await setupCandidates();
 			await expect (voting.connect(addr4).newVoting(names, addresses, startDate)
-				).to.be.revertedWith("Ownable: caller is not the owner");
+				).to.be.revertedWith("Not an owner");
 		});
 
 		it ("Names and Addresses arrays must be of the same length", async function() {
@@ -83,21 +79,21 @@ describe("Voting contract", function () {
 				).to.be.revertedWith("Wrong startDate");
 		});	
 		
-		// it ("Protection against zerro addresses", async function() {
-		// 	names = ["name1", "name2"];
-		// 	addresses = [address(0), addr2.address];
-		// 	startDate = 10;
-		// 	await expect (voting.newVoting(names, addresses, startDate)
-		// 		).to.be.revertedWith("Addr is zerro address");
-		// });	
+		it ("Protection against zerro addresses", async function() {
+			names = ["name1", "name2"];
+			addresses = ["0x0000000000000000000000000000000000000000", addr2.address];
+			startDate = Math.round(new Date().getTime() / 1000) + 100;
+			await expect (voting.newVoting(names, addresses, startDate)
+				).to.be.revertedWith("Addr is zerro address");
+		});	
 
-		// it ("Address cannot be a contract address", async function() {
-		// 	names = ["name1", "name2"];
-		// 	addresses = [Voting, addr2.address];
-		// 	startDate = 10;
-		// 	await expect (voting.newVoting(names, addresses, startDate)
-		// 		).to.be.revertedWith("Addr is contract");
-		// });	
+		it ("Address cannot be a contract address", async function() {
+			names = ["name1", "name2"];
+			addresses = [voting.address, addr2.address];
+			startDate = Math.round(new Date().getTime() / 1000) + 100;
+			await expect (voting.newVoting(names, addresses, startDate)
+				).to.be.revertedWith("Addr is contract");
+		});	
 
 		it ("Two candidates with same address is not possible", async function() {
 			names = ["name1", "name2"];
@@ -115,7 +111,12 @@ describe("Voting contract", function () {
 				).to.be.revertedWith("Invalid name");
 		});	
 
-
+		it("Retrieve information about candidate", async function(){
+			await setupCandidates();
+			let votingID = await voting.newVoting(names, addresses, startDate);
+			const {0: name, 1: address, 2: numVotes} =  await voting.candidate(votingID.value, 1);
+			expect(name).to.equal("name1");		
+		})
 	});
 
 	describe ("Deleting Voting", function () {
@@ -123,7 +124,7 @@ describe("Voting contract", function () {
 			await setupCandidates();
 			let votingID = await voting.newVoting(names, addresses, startDate);
 			await expect (voting.connect(addr4).deleteVoting(votingID.value)
-				).to.be.revertedWith("Ownable: caller is not the owner");
+				).to.be.revertedWith("Not an owner");
 		});	
 
 		it ("Check whether Voting exist", async function() {
@@ -142,6 +143,32 @@ describe("Voting contract", function () {
 			await expect (voting.deleteVoting(votingID.value)
 				).to.be.revertedWith("Can delete only after the voting is closed");
 		});	
+
+		it ("Voting deleting takes place", async function(){
+			await setupCandidates();
+			let votingID = await voting.newVoting(names, addresses, startDate);
+			timeCorrection = 604800 + 100;
+			await ethers.provider.send("evm_increaseTime", [timeCorrection]);
+			await voting.vote(votingID.value, 1, {value: ethers.utils.parseEther("0.01")});
+			await ethers.provider.send("evm_increaseTime", [-timeCorrection]);
+			timeCorrection = 604800 + 259200 + 100;
+			await ethers.provider.send("evm_increaseTime", [timeCorrection]);
+			await voting.closeVoting(votingID.value);
+			await voting.deleteVoting(votingID.value);
+			await expect (voting.deleteVoting(votingID.value)
+				).to.be.revertedWith("Voting doesn't exist");
+		})
+
+		it ("Repositioning of the remaining votings is correct", async function() {
+			await setupCandidates();
+			let votingID1 = await voting.newVoting(names, addresses, startDate);			
+			let votingID2 = await voting.newVoting(names, addresses, startDate);			
+			timeCorrection = 604800 + 259200 + 100;
+			await ethers.provider.send("evm_increaseTime", [timeCorrection]);
+			await voting.closeVoting(votingID1.value);
+			await voting.deleteVoting(votingID1.value);	
+			expect (await voting.votingIndex(1)).to.be.equal(0);
+		});
 
 	});
 
@@ -227,19 +254,53 @@ describe("Voting contract", function () {
 			await ethers.provider.send("evm_increaseTime", [timeCorrection]);
 			await voting.vote(votingID.value, 1, {value: ethers.utils.parseEther("0.01")});
 			await ethers.provider.send("evm_increaseTime", [-timeCorrection]);
-			timeCorrection = 604800 + 259200 + 100;
+			timeCorrection += 259200;
 			await ethers.provider.send("evm_increaseTime", [timeCorrection]);
 			await voting.closeVoting(votingID.value);
 			await expect (voting.closeVoting(votingID.value)
 				).to.be.revertedWith('Already finalized');
-		});		
+		});	
+		
+		it ("More than 1 winner (with same number of wotes)", async function(){
+			await setupCandidates();
+			let votingID = await voting.newVoting(names, addresses, startDate);
+			timeCorrection = 604800 + 100;
+			await ethers.provider.send("evm_increaseTime", [timeCorrection]);
+			await voting.vote(votingID.value, 1, {value: ethers.utils.parseEther("0.01")});
+			await voting.connect(addr4).vote(votingID.value, 2, {value: ethers.utils.parseEther("0.01")});
+			await ethers.provider.send("evm_increaseTime", [-timeCorrection]);
+			timeCorrection += 259200;
+			await ethers.provider.send("evm_increaseTime", [timeCorrection]);
+			await ethers.provider.send("evm_mine");
+			let res = await voting.callStatic.closeVoting(votingID.value);
+			if(res == 1 || res == 2)
+				return true;
+			else
+				return false;				
+		});
+
+		it ("Correct winner is picked", async function() {
+			await setupCandidates();
+			let votingID = await voting.newVoting(names, addresses, startDate);
+			timeCorrection = 604800 + 100;
+			await ethers.provider.send("evm_increaseTime", [timeCorrection]);
+			await voting.vote(votingID.value, 1, {value: ethers.utils.parseEther("0.01")});
+			await voting.connect(addr4).vote(votingID.value, 2, {value: ethers.utils.parseEther("0.01")});
+			await voting.connect(addr5).vote(votingID.value, 2, {value: ethers.utils.parseEther("0.01")});
+			await ethers.provider.send("evm_increaseTime", [-timeCorrection]);
+			timeCorrection = 604800 + 100 + 259200;
+			await ethers.provider.send("evm_increaseTime", [timeCorrection]);
+			await ethers.provider.send("evm_mine");
+			let id = await voting.callStatic.closeVoting(votingID.value);
+			expect(id).to.equal(2);				
+		})
 	});
 
 	describe ("Withdrawing Commission", function () {
 		it ("Only owner can withdraw commission", async function() {
 			await setupCandidates();
 			await expect (voting.connect(addr1).withdrawCommission()
-				).to.be.revertedWith("Ownable: caller is not the owner");
+				).to.be.revertedWith("Not an owner");
 		});
 
 		it ("Balance must be positive", async function() {
@@ -253,5 +314,25 @@ describe("Voting contract", function () {
 			await expect (voting.connect(owner).withdrawCommission()
 				).to.be.revertedWith("No available balance");
 		});
+	});
+
+	describe ("Testing view functions", function () {
+		it ("Check that view functions work properly", async function() {
+			await setupCandidates();
+			let votingID = await voting.newVoting(names, addresses, startDate);
+			timeCorrection = 604800 + 100;
+			await ethers.provider.send("evm_increaseTime", [timeCorrection]);
+			await voting.vote(votingID.value, 1, {value: ethers.utils.parseEther("0.01")});
+			expect(await voting.numVotes(votingID.value, 1)).to.equal(1);
+			expect(await voting.startDate(votingID.value)).to.gt(0);
+			expect(await voting.endDate(votingID.value)).to.gt(0);
+			expect(await voting.numVoters(votingID.value)).to.equal(1);
+			expect(await voting.commissionBalance()).to.equal(ethers.utils.parseEther('0.001'));
+			expect(await voting.totalFundsRecieved()).to.equal(ethers.utils.parseEther('0.01'));
+
+			await voting.withdrawCommission();
+			expect(await voting.totalCommissionReleased()).to.equal(ethers.utils.parseEther('0.001'));
+
+		})	
 	});
 });
